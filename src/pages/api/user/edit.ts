@@ -62,8 +62,16 @@ async function handler(req: NextApiRequestWithUser, res: NextApiResponse) {
   );
   const partialSchema = profileSchema._def.schema
     .pick(keysToValidate)
-    .superRefine((data, ctx) => {
-      usernameSuperRefine(data, ctx, user.id);
+    .superRefine(async (data, ctx) => {
+      await usernameSuperRefine(data, ctx, user.id, {
+        isUsernameAvailable: async (username, currentUserId) => {
+          const existingUser = await prisma.user.findUnique({
+            where: { username },
+            select: { id: true },
+          });
+          return !existingUser || existingUser.id === currentUserId;
+        },
+      });
     });
   const updatedData = await partialSchema.parseAsync({
     ...filteredData,

@@ -146,9 +146,17 @@ export async function POST(request: NextRequest) {
 
     const partialSchema = profileSchema._def.schema
       .pick(keysToValidate)
-      .superRefine((data, ctx) => {
-        socialSuperRefine(data, ctx);
-        usernameSuperRefine(data, ctx, user.id);
+      .superRefine(async (data, ctx) => {
+        await socialSuperRefine(data, ctx);
+        await usernameSuperRefine(data, ctx, user.id, {
+          isUsernameAvailable: async (username, currentUserId) => {
+            const existingUser = await prisma.user.findUnique({
+              where: { username },
+              select: { id: true },
+            });
+            return !existingUser || existingUser.id === currentUserId;
+          },
+        });
       });
 
     const github =
