@@ -51,9 +51,14 @@ export async function POST(request: NextRequest) {
     const { description, submissionId, listingType } =
       spamDisputeSchema.parse(body);
 
+    const isGrantDispute = listingType === 'GRANT';
+    const idFilter = isGrantDispute
+      ? { applicationId: submissionId }
+      : { submissionId };
+
     const existingDispute = await prisma.creditLedger.findFirst({
       where: {
-        submissionId,
+        ...idFilter,
         userId,
         type: {
           in: [
@@ -76,7 +81,7 @@ export async function POST(request: NextRequest) {
 
     const spamEntry = await prisma.creditLedger.findFirst({
       where: {
-        submissionId,
+        ...idFilter,
         userId,
         type: {
           in: [
