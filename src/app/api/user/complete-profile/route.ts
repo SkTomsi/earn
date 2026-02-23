@@ -1,4 +1,3 @@
-import { waitUntil } from '@vercel/functions';
 import { headers } from 'next/headers';
 import { type NextRequest, NextResponse } from 'next/server';
 
@@ -255,13 +254,11 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    waitUntil(
-      refreshUserMembershipLevel({
-        userId,
-        email: user.email,
-        currentSuperteamLevel: user.superteamLevel ?? null,
-      }),
-    );
+    await refreshUserMembershipLevel({
+      userId,
+      email: user.email,
+      currentSuperteamLevel: user.superteamLevel ?? null,
+    });
 
     const result = await prisma.user.findUnique({
       where: { id: userId },

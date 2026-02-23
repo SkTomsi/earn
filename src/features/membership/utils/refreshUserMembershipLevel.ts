@@ -17,6 +17,7 @@ type AirtablePeopleFields = {
 
 type AirtablePeopleResponse = {
   records?: Array<{
+    createdTime?: string;
     fields?: AirtablePeopleFields;
   }>;
   offset?: string;
@@ -30,13 +31,20 @@ async function fetchPeopleRecordsByFormula(
   peopleUrl: string,
   apiToken: string,
   formula: string,
-): Promise<AirtablePeopleFields[]> {
-  const records: AirtablePeopleFields[] = [];
+  maxRecords?: number,
+): Promise<Array<{ createdTime?: string; fields?: AirtablePeopleFields }>> {
+  const records: Array<{
+    createdTime?: string;
+    fields?: AirtablePeopleFields;
+  }> = [];
   let offset: string | undefined;
 
   do {
     const queryUrl = new URL(peopleUrl);
     queryUrl.searchParams.set('filterByFormula', formula);
+    if (maxRecords) {
+      queryUrl.searchParams.set('maxRecords', String(maxRecords));
+    }
 
     if (offset) {
       queryUrl.searchParams.set('offset', offset);
@@ -57,21 +65,17 @@ async function fetchPeopleRecordsByFormula(
     }
 
     const data = (await response.json()) as AirtablePeopleResponse;
-    records.push(
-      ...(data.records
-        ?.map((record) => record.fields)
-        .filter((field): field is AirtablePeopleFields => !!field) ?? []),
-    );
+    records.push(...(data.records ?? []));
     offset = data.offset;
-  } while (offset);
+  } while (offset && (!maxRecords || records.length < maxRecords));
 
-  return records;
+  return maxRecords ? records.slice(0, maxRecords) : records;
 }
 
 export async function refreshUserMembershipLevel({
   userId,
   email,
-  currentSuperteamLevel: _currentSuperteamLevel,
+  currentSuperteamLevel,
 }: RefreshUserMembershipLevelInput): Promise<void> {
   const peopleBaseId = process.env.AIRTABLE_PEOPLE_BASE_ID;
   const peopleTable = process.env.AIRTABLE_PEOPLE_COMMUNITY_TABLE;
@@ -93,35 +97,50 @@ export async function refreshUserMembershipLevel({
     return;
   }
 
+  if (currentSuperteamLevel?.trim()) {
+    logger.debug(
+      'Skipping membership refresh: user already has superteamLevel',
+      { userId, currentSuperteamLevel },
+    );
+    return;
+  }
+
   const escapedEmail = escapeAirtableString(normalizedEmail);
   const memberFormula = `AND(LOWER({Email})='${escapedEmail}', {Person Type}='Member')`;
   const contributorFormula = `AND(LOWER({Email})='${escapedEmail}', {Person Type}='Contributor', NOT(BLANK({mem status updated time})))`;
 
   try {
-    const memberRecords = await fetchPeopleRecordsByFormula(
-      peopleUrl,
-      peopleApiToken,
-      memberFormula,
-    );
+    const [memberRecords, contributorRecords] = await Promise.all([
+      fetchPeopleRecordsByFormula(peopleUrl, peopleApiToken, memberFormula),
+      fetchPeopleRecordsByFormula(
+        peopleUrl,
+        peopleApiToken,
+        contributorFormula,
+        1,
+      ),
+    ]);
+
     let nextSuperteamLevel: string | null = null;
 
     if (memberRecords.length > 0) {
-      const latestMemberRecord = memberRecords.at(-1);
-      if (!latestMemberRecord) {
+      const memberRecordWithRegion = memberRecords
+        .filter((record) => !!record.fields?.Region?.trim())
+        .sort((a, b) => {
+          const first = Date.parse(a.createdTime ?? '') || 0;
+          const second = Date.parse(b.createdTime ?? '') || 0;
+          return second - first;
+        })
+        .at(0);
+
+      if (!memberRecordWithRegion?.fields?.Region) {
         logger.debug('Membership refresh found no usable member record', {
           userId,
           email: normalizedEmail,
         });
       } else {
-        nextSuperteamLevel = `Superteam ${latestMemberRecord.Region}`;
+        nextSuperteamLevel = `Superteam ${memberRecordWithRegion.fields.Region}`;
       }
     }
-
-    const contributorRecords = await fetchPeopleRecordsByFormula(
-      peopleUrl,
-      peopleApiToken,
-      contributorFormula,
-    );
 
     if (contributorRecords.length > 0) {
       nextSuperteamLevel = 'Contributor';
@@ -129,7 +148,7 @@ export async function refreshUserMembershipLevel({
 
     if (nextSuperteamLevel) {
       const result = await prisma.user.updateMany({
-        where: { email: normalizedEmail },
+        where: { id: userId, email: normalizedEmail },
         data: { superteamLevel: nextSuperteamLevel },
       });
 
