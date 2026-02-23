@@ -115,16 +115,25 @@ export const usernameSuperRefine = async (
   data: Partial<ProfileFormData>,
   ctx: z.RefinementCtx,
   userId: string,
+  options?: {
+    isUsernameAvailable?: (
+      username: string,
+      currentUserId: string,
+    ) => Promise<boolean>;
+  },
 ) => {
   if (data.username) {
     try {
-      const response = await api.get(`${getURL()}api/user/username`, {
-        params: {
-          username: data.username,
-          userId,
-        },
-      });
-      const available = response.data.available;
+      const available = options?.isUsernameAvailable
+        ? await options.isUsernameAvailable(data.username, userId)
+        : (
+            await api.get(`${getURL()}api/user/username`, {
+              params: {
+                username: data.username,
+                userId,
+              },
+            })
+          ).data.available;
       if (!available) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
